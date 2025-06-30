@@ -3,6 +3,7 @@ import { X, Save, Loader, Users, Calendar, DollarSign, MapPin, Plus, Trash2 } fr
 import { GroupFormState, GroupPayload, mapFormToPayload } from '../../types/group';
 import { GroupSchedule, StudentGroup, Subject } from '../../types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '../../lib/supabase';
 
 export type MinimalTeacher = { id: string; name: string; email: string };
 
@@ -35,15 +36,20 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
   onClose, 
   onSave, 
   editGroup, 
-  teachers = [],
-  defaultTeacherId
+  teachers: propTeachers = [],
+  defaultTeacherId,
+  onTeachersError
 }) => {
   // قائمة المواد المتاحة (يمكن جلبها من context أو API)
   const [subjects] = useState<Subject[]>([
-    { id: '1', name: 'الرياضيات', code: 'MATH', category: 'رياضيات', grades: [], color: '#3B82F6', isActive: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { id: '2', name: 'الفيزياء', code: 'PHYS', category: 'علوم', grades: [], color: '#10B981', isActive: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-    { id: '3', name: 'اللغة الإنجليزية', code: 'ENG', category: 'لغات', grades: [], color: '#8B5CF6', isActive: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+    { id: '1', name: 'الرياضيات', code: 'MATH', category: 'رياضيات', grades: [], color: '#3B82F6', isActive: true, createdAt: new Date(), updatedAt: new Date() },
+    { id: '2', name: 'الفيزياء', code: 'PHYS', category: 'علوم', grades: [], color: '#10B981', isActive: true, createdAt: new Date(), updatedAt: new Date() },
+    { id: '3', name: 'اللغة الإنجليزية', code: 'ENG', category: 'لغات', grades: [], color: '#8B5CF6', isActive: true, createdAt: new Date(), updatedAt: new Date() }
   ]);
+
+  const [teachers, setTeachers] = useState<MinimalTeacher[]>(propTeachers);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
+  const [teachersError, setTeachersError] = useState('');
 
   const [formData, setFormData] = useState<GroupFormState>({
     name: '',
@@ -74,46 +80,98 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
     'الصف الأول الثانوي', 'الصف الثاني الثانوي', 'الصف الثالث الثانوي'
   ];
 
-  useEffect(() => {
-    if (editGroup) {
-      setFormData({
-        name: editGroup.name,
-        subject_id: editGroup.subject_id || '',
-        grade: editGroup.grade,
-        description: editGroup.description || '',
-        monthly_price: editGroup.monthly_price || 0,
-        max_students: editGroup.max_students || 0,
-        current_students: editGroup.current_students || 0,
-        location: editGroup.location || '',
-        materials: editGroup.materials || [],
-        rules: editGroup.rules || [],
-        start_date: editGroup.start_date || '',
-        end_date: editGroup.end_date || '',
-        is_active: editGroup.is_active,
-        teacher_id: editGroup.teacher_id || ''
-      });
-      setSchedule(editGroup.schedule || []);
-    } else {
-      setFormData({
-        name: '',
-        subject_id: '',
-        grade: '',
-        description: '',
-        monthly_price: 0,
-        max_students: 10,
-        current_students: 0,
-        location: '',
-        materials: [],
-        rules: [],
-        start_date: new Date().toISOString().split('T')[0],
-        end_date: new Date().toISOString().split('T')[0],
-        is_active: true,
-        teacher_id: defaultTeacherId || ''
-      });
-      setSchedule([]);
+  // جلب المدرسين من قاعدة البيانات
+  const fetchTeachers = async () => {
+    setLoadingTeachers(true);
+    setTeachersError('');
+    
+    try {
+      console.log('Fetching teachers from database...');
+      
+      const { data, error } = await supabase
+        .from('teachers')
+        .select('id, name, email')
+        .eq('is_active', true)
+        .order('name');
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+
+      console.log('Teachers fetched:', data);
+      
+      if (!data || data.length === 0) {
+        setTeachersError('لا توجد مدرسين نشطين في النظام. يرجى إضافة مدرسين أولاً.');
+        if (onTeachersError) {
+          onTeachersError('لا توجد مدرسين نشطين في النظام');
+        }
+      } else {
+        setTeachers(data as MinimalTeacher[]);
+        console.log(`تم تحميل ${data.length} مدرس بنجاح`);
+      }
+    } catch (err) {
+      console.error('Error fetching teachers:', err);
+      const errorMessage = err instanceof Error ? err.message : 'خطأ في جلب قائمة المدرسين';
+      setTeachersError(errorMessage);
+      if (onTeachersError) {
+        onTeachersError(errorMessage);
+      }
+    } finally {
+      setLoadingTeachers(false);
     }
-    setError('');
-  }, [editGroup, isOpen, defaultTeacherId]);
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      // جلب المدرسين عند فتح النافذة
+      if (propTeachers.length === 0) {
+        fetchTeachers();
+      } else {
+        setTeachers(propTeachers);
+      }
+
+      if (editGroup) {
+        setFormData({
+          name: editGroup.name,
+          subject_id: editGroup.subjectId || '',
+          grade: editGroup.grade,
+          description: editGroup.description || '',
+          monthly_price: editGroup.monthlyPrice || 0,
+          max_students: editGroup.maxStudents || 0,
+          current_students: editGroup.currentStudents || 0,
+          location: editGroup.location || '',
+          materials: editGroup.materials || [],
+          rules: editGroup.rules || [],
+          start_date: editGroup.startDate ? editGroup.startDate.toISOString().split('T')[0] : '',
+          end_date: editGroup.endDate ? editGroup.endDate.toISOString().split('T')[0] : '',
+          is_active: editGroup.isActive,
+          teacher_id: editGroup.teacherId || ''
+        });
+        setSchedule(editGroup.schedule || []);
+      } else {
+        setFormData({
+          name: '',
+          subject_id: '',
+          grade: '',
+          description: '',
+          monthly_price: 0,
+          max_students: 10,
+          current_students: 0,
+          location: '',
+          materials: [],
+          rules: [],
+          start_date: new Date().toISOString().split('T')[0],
+          end_date: new Date().toISOString().split('T')[0],
+          is_active: true,
+          teacher_id: defaultTeacherId || ''
+        });
+        setSchedule([]);
+      }
+      setError('');
+      setTeachersError('');
+    }
+  }, [editGroup, isOpen, defaultTeacherId, propTeachers]);
 
   // تحديث المادة عند اختيار مادة جديدة
   const handleSubjectChange = (subjectId: string) => {
@@ -162,11 +220,19 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
     e.preventDefault();
     setLoading(true);
     setError('');
+    
     if (schedule.length === 0) {
       setError('يجب إضافة موعد واحد على الأقل');
       setLoading(false);
       return;
     }
+
+    if (!formData.teacher_id) {
+      setError('يجب اختيار مدرس للمجموعة');
+      setLoading(false);
+      return;
+    }
+    
     try {
       const dbGroup = mapFormToPayload(formData, schedule);
       await onSave({
@@ -249,15 +315,15 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                     value={formData.teacher_id}
                     onChange={e => setFormData({ ...formData, teacher_id: e.target.value })}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-right"
-                    disabled={loading}
+                    disabled={loading || loadingTeachers}
                   >
-                    {loading && (
+                    {loadingTeachers && (
                       <option value="" disabled>جاري تحميل المدرسين...</option>
                     )}
-                    {!loading && teachers?.length === 0 && (
+                    {!loadingTeachers && teachers.length === 0 && (
                       <option value="" disabled>لا توجد مدرسين متاحين</option>
                     )}
-                    {!loading && teachers?.length > 0 && (
+                    {!loadingTeachers && teachers.length > 0 && (
                       <>
                         <option value="">اختر المدرس</option>
                         {teachers.map(t => (
@@ -266,10 +332,32 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                       </>
                     )}
                   </select>
-                  {!loading && teachers?.length === 0 && (
+                  
+                  {loadingTeachers && (
+                    <div className="flex items-center mt-2 text-sm text-blue-600">
+                      <Loader className="h-4 w-4 animate-spin mr-2" />
+                      <span>جاري تحميل المدرسين...</span>
+                    </div>
+                  )}
+                  
+                  {teachersError && (
+                    <div className="mt-2 text-sm text-red-600 bg-red-50 p-2 rounded">
+                      {teachersError}
+                      <button
+                        type="button"
+                        onClick={fetchTeachers}
+                        className="mr-2 text-blue-600 underline hover:text-blue-800"
+                      >
+                        إعادة المحاولة
+                      </button>
+                    </div>
+                  )}
+                  
+                  {!loadingTeachers && teachers.length === 0 && !teachersError && (
                     <p className="text-sm text-red-600 mt-1">لا توجد مدرسين نشطين في النظام</p>
                   )}
-                  {teachers?.length > 0 && (
+                  
+                  {teachers.length > 0 && (
                     <p className="text-sm text-gray-500 mt-1">تم العثور على {teachers.length} مدرس</p>
                   )}
                 </div>
@@ -415,6 +503,99 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                 </div>
               </div>
 
+              {/* مواعيد المجموعة */}
+              <div className="bg-green-50 rounded-lg p-6 border border-green-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-green-900 flex items-center space-x-2 rtl:space-x-reverse">
+                    <Calendar className="h-5 w-5" />
+                    <span>مواعيد المجموعة</span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addScheduleSlot}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center space-x-2 rtl:space-x-reverse"
+                    disabled={loading}
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>إضافة موعد</span>
+                  </button>
+                </div>
+
+                {schedule.length === 0 ? (
+                  <div className="text-center py-8 text-green-600">
+                    <Calendar className="h-12 w-12 mx-auto mb-4 text-green-400" />
+                    <p>لم يتم إضافة مواعيد بعد</p>
+                    <p className="text-sm mt-2">اضغط "إضافة موعد" لتحديد مواعيد المجموعة</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {schedule.map((slot, index) => (
+                      <div key={index} className="bg-white rounded-lg p-4 border border-green-300">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-green-700 mb-2">اليوم</label>
+                            <select
+                              value={slot.day}
+                              onChange={(e) => updateScheduleSlot(index, 'day', e.target.value)}
+                              className="w-full py-2 px-3 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-right"
+                              required
+                              disabled={loading}
+                            >
+                              <option value="">اختر اليوم</option>
+                              {days.map(day => (
+                                <option key={day} value={day}>{day}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-green-700 mb-2">من الساعة</label>
+                            <input
+                              type="time"
+                              value={slot.startTime}
+                              onChange={(e) => updateScheduleSlot(index, 'startTime', e.target.value)}
+                              className="w-full py-2 px-3 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                              required
+                              disabled={loading}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-green-700 mb-2">إلى الساعة</label>
+                            <input
+                              type="time"
+                              value={slot.endTime}
+                              onChange={(e) => updateScheduleSlot(index, 'endTime', e.target.value)}
+                              className="w-full py-2 px-3 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                              required
+                              disabled={loading}
+                            />
+                          </div>
+
+                          <div className="flex items-end">
+                            <button
+                              type="button"
+                              onClick={() => removeScheduleSlot(index)}
+                              className="w-full bg-red-600 text-white py-2 px-3 rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center justify-center space-x-2 rtl:space-x-reverse"
+                              disabled={loading}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span>حذف</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {slot.startTime && slot.endTime && (
+                          <div className="mt-2 text-sm text-green-600">
+                            المدة: {slot.duration} دقيقة
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* أزرار الحفظ */}
               <div className="flex space-x-4 rtl:space-x-reverse pt-6 border-t border-gray-200">
                 <button
@@ -427,7 +608,7 @@ const AddGroupModal: React.FC<AddGroupModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || !formData.name || !formData.grade || !formData.subject_id || schedule.length === 0}
+                  disabled={loading || !formData.name || !formData.grade || !formData.subject_id || !formData.teacher_id || schedule.length === 0}
                   className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-lg hover:shadow-lg transition-all duration-200 flex items-center justify-center space-x-2 rtl:space-x-reverse disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
                   {loading ? (
